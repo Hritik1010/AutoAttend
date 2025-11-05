@@ -260,7 +260,7 @@ app.post("/api/employees", authMiddleware, zValidator("json", CreateEmployeeSche
 
 // ESP32 detection endpoint - now searches by hex value in employee_details
 app.post("/api/esp32/detect", zValidator("json", ESP32DetectionSchema), async (c) => {
-  const { hex_value } = c.req.valid("json");
+  const { hex_value, action } = c.req.valid("json");
   const db = c.env.DB;
 
   // First try to find employee by direct hex value match (details table)
@@ -294,16 +294,17 @@ app.post("/api/esp32/detect", zValidator("json", ESP32DetectionSchema), async (c
     }, 404);
   }
 
-  const status = 'checkin';
+  // Determine event type; default to checkin if not provided
+  const status: 'checkin' | 'checkout' = (action === 'checkout' ? 'checkout' : 'checkin');
   const now = new Date();
 
-  // Dedupe: ignore if a check-in exists in last 60 seconds
+  // Dedupe: ignore if a same-status event exists in last 60 seconds
   const recent = await db.prepare(`
     SELECT id FROM attendance_records 
-    WHERE employee_id = ? AND status = 'checkin' 
+    WHERE employee_id = ? AND status = ? 
       AND datetime(recorded_at) >= datetime(? , '-60 seconds')
     ORDER BY recorded_at DESC LIMIT 1
-  `).bind(employee.id, now.toISOString()).first();
+  `).bind(employee.id, status, now.toISOString()).first();
   if (recent) {
     return c.json({ success: true, deduped: true });
   }

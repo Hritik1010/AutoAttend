@@ -84,9 +84,10 @@ export const CreateEmployeeSchema = z.object({
   notes: z.string().optional(),
 });
 
-// ESP32 detection schema - only hex value is required
+// ESP32 detection schema - hex value is required; optional action for checkout
 export const ESP32DetectionSchema = z.object({
   hex_value: z.string(),
+  action: z.enum(['checkin', 'checkout']).optional(),
 });
 
 // Attendance statistics schema

@@ -28,11 +28,33 @@ MOCHA_USERS_SERVICE_API_KEY=<your-api-key>
 npm run dev
 ```
 
-- App: http://localhost:5173/ (or the next available port)
-- API is served from the same origin under `/api/*` by the Worker
+
+## ESP32 Integration
+
+The ESP32 scanner posts detections directly to the Worker API.
+
+- Endpoint: `POST /api/esp32/detect`
+- Content-Type: `application/json`
+- Body:
+
+```
+// Check-in (default)
+{
+	"hex_value": "<ASCII-HEX of employee identifier>"
+}
+
+// Explicit checkout
+{
+	"hex_value": "<ASCII-HEX of employee identifier>",
+	"action": "checkout"
+}
+```
+
+Notes:
+- `action` is optional and defaults to `checkin` if omitted.
+- The server dedupes repeating events of the same type within 60 seconds and returns `{ success: true, deduped: true }`.
+- Stats consider someone “present” if they have a check-in with no later checkout on the same day.
 
 ### Notes
 
-- If login shows "Unauthorized" or the console logs an OAuth error, you need to provide the
 	`MOCHA_USERS_SERVICE_API_URL` and `MOCHA_USERS_SERVICE_API_KEY` values in `.dev.vars`.
-- The Worker uses a local D1 database. Ensure migrations are applied before hitting data endpoints.

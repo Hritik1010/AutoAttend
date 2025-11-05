@@ -17,7 +17,7 @@ const char* WIFI_PASS = "Air@52077";
 // IMPORTANT: set this to the machine running the dev server (same network)
 // Example if your laptop's IP is 192.168.1.50 and Vite dev uses 5175:
 //   http://192.168.1.50:5175
-const char* SERVER_HOST = "http://10.218.126.14:5175"; 
+const char* SERVER_HOST = "http://192.168.1.14:5175"; 
 const char* SERVER_ENDPOINT = "/api/esp32/detect"; // Worker endpoint (hex only)
 
 // How long to ignore repeat POSTs for the same event (seconds)
@@ -80,8 +80,8 @@ bool wasPostSuccessful(const String &response) {
          response.indexOf("\"deduped\":true") >= 0;
 }
 
-// Send a single hex_value (ASCII hex string) to AutoAttend via HTTP POST
-void sendHexToServer(const std::string &hexValue) {
+// Internal helper to POST with action ("checkin" or "checkout")
+void sendHexToServerWithAction(const std::string &hexValue, const char* action) {
   static const int MAX_RETRIES = 3;  // Maximum number of retry attempts
   
   // dedupe by lastSentAt TTL
@@ -113,8 +113,8 @@ void sendHexToServer(const std::string &hexValue) {
     HTTPClient http;
     http.begin(url);
     http.addHeader("Content-Type", "application/json");
-  // Build payload {"hex_value":"..."}
-  String payload = "{\"hex_value\":\"" + String(hexValue.c_str()) + "\"}";
+  // Build payload {"hex_value":"...", "action":"checkin|checkout"}
+  String payload = String("{\"hex_value\":\"") + String(hexValue.c_str()) + String("\",\"action\":\"") + String(action) + String("\"}");
   Serial.printf("📡 POSTing to AutoAttend (attempt %d/%d): %s\n", retries + 1, MAX_RETRIES, payload.c_str());
     
     int code = http.POST(payload);
@@ -149,6 +149,11 @@ void sendHexToServer(const std::string &hexValue) {
   // If we get here, we failed after all retries
   Serial.printf("❌ Failed to POST after %d attempts\n", MAX_RETRIES);
   presentDevices.erase(hexValue);  // Remove from tracking to allow future retry
+}
+
+// Send a single hex_value (ASCII hex string) as a check-in (default)
+void sendHexToServer(const std::string &hexValue) {
+  sendHexToServerWithAction(hexValue, "checkin");
 }
 
 // Minimal JSON escaper for strings we send to Strapi
@@ -457,8 +462,9 @@ void loop() {
     auto it = lastSeenAt.find(h);
     if (it == lastSeenAt.end()) continue;
     if ((nowSec - it->second) > PRESENCE_TIMEOUT_SECONDS) {
-      // treat as departure: for now we do NOT POST checkout (server uses hex-only check-in)
-      Serial.printf("Device %s timed out (no longer seen). Marking as left (no POST).\n", h.c_str());
+      // Device considered departed: POST a checkout event
+      Serial.printf("Device %s timed out (no longer seen). Posting checkout...\n", h.c_str());
+      sendHexToServerWithAction(h, "checkout");
       toRemove.push_back(h);
     }
   }
