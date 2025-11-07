@@ -688,3 +688,96 @@ app.get("/api/attendance/stats", authMiddleware, async (c) => {
 });
 
 export default app;
+
+// CSV export endpoint (protected)
+app.get('/api/attendance/export', authMiddleware, async (c) => {
+  const db = c.env.DB;
+  const date = c.req.query('date'); // YYYY-MM-DD
+  const month = c.req.query('month'); // YYYY-MM
+  const department = c.req.query('department');
+  const role = c.req.query('role');
+  const status = c.req.query('status');
+  const employee_id = c.req.query('employee_id');
+
+  if (!date && !month) {
+    return c.json({ error: 'Provide either ?date=YYYY-MM-DD or ?month=YYYY-MM' }, 400);
+  }
+
+  // Build base query
+  let query = `
+    SELECT 
+      ar.id,
+      ar.employee_id,
+      ar.company_uuid,
+      ar.hex_value,
+      ar.status,
+      ar.recorded_at,
+      ar.day_of_week,
+      ar.date,
+      ar.time,
+      ar.month,
+      ar.year,
+      e.name as employee_name,
+      ed.role as employee_role,
+      ed.department as employee_department,
+      ed.emp_id as employee_emp_id
+    FROM attendance_records ar
+    JOIN employees e ON ar.employee_id = e.id
+    LEFT JOIN employee_details ed ON e.id = ed.employee_id
+    WHERE 1=1
+  `;
+
+  const params: Array<string> = [];
+
+  if (date) {
+    query += ' AND ar.date = ?';
+    params.push(date);
+  }
+  if (month) {
+    // Match YYYY-MM- prefix
+    query += ' AND ar.date LIKE ?';
+    params.push(`${month}-%`);
+  }
+  if (department) {
+    query += ' AND ed.department = ?';
+    params.push(department);
+  }
+  if (role) {
+    query += ' AND ed.role = ?';
+    params.push(role);
+  }
+  if (status) {
+    query += ' AND ar.status = ?';
+    params.push(status);
+  }
+  if (employee_id) {
+    query += ' AND ar.employee_id = ?';
+    params.push(employee_id);
+  }
+
+  query += ' ORDER BY ar.date ASC, ar.time ASC';
+
+  const result = await db.prepare(query).bind(...params).all();
+  const rows = (result.results || []) as Array<{
+    date: string; time: string; employee_name: string; employee_role: string | null; employee_department: string | null; status: string; hex_value: string; employee_emp_id: string | null;
+  }>;
+
+  // Headers
+  const headers = ['Date','Time','Employee','Role','Department','Status','Hex Value','Employee ID'];
+  const csvLines = [headers.join(',')];
+  for (const r of rows) {
+    const line = [r.date, r.time, r.employee_name, r.employee_role || '', r.employee_department || '', r.status, r.hex_value, r.employee_emp_id || '']
+      .map(v => '"' + String(v).replace(/"/g, '""') + '"').join(',');
+    csvLines.push(line);
+  }
+
+  const csvContent = csvLines.join('\n');
+  const filenameBase = date ? date : month ? month : 'attendance';
+  return new Response(csvContent, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="attendance-${filenameBase}.csv"`
+    }
+  });
+});

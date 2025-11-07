@@ -111,6 +111,22 @@ export function useAttendance(limit?: number) {
   return { attendance, loading, error, refetch: fetchAttendance };
 }
 
+export async function exportAttendanceCSV(opts: { date?: string; month?: string; department?: string; role?: string }) {
+  const params = new URLSearchParams();
+  if (opts.date) params.set('date', opts.date);
+  if (opts.month) params.set('month', opts.month);
+  if (opts.department) params.set('department', opts.department);
+  if (opts.role) params.set('role', opts.role);
+  const url = `${API_BASE}/api/attendance/export?${params.toString()}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to export attendance CSV');
+  }
+  const blob = await response.blob();
+  return blob;
+}
+
 export function useAttendanceStats() {
   const [stats, setStats] = useState<AttendanceStats | null>(null);
   const [loading, setLoading] = useState(true);
