@@ -4,6 +4,7 @@ import { cors } from "hono/cors";
 import { getCookie, setCookie } from "hono/cookie";
 import { 
   CreateEmployeeSchema, 
+  UpdateEmployeeSchema,
   ESP32DetectionSchema
 } from "@/shared/types";
 
@@ -172,10 +173,19 @@ app.post("/api/employees", authMiddleware, zValidator("json", CreateEmployeeSche
   try {
     // Start a transaction-like approach (D1 doesn't support transactions)
     // First create the employee
+    // Generate a unique per-employee identifier to satisfy UNIQUE constraint on employees.uuid
+    const generatedUuid = (typeof crypto !== 'undefined' && typeof (crypto as unknown as { randomUUID?: () => string }).randomUUID === 'function')
+      ? (crypto as unknown as { randomUUID: () => string }).randomUUID()
+      : `emp-${Date.now()}-${Math.floor(Math.random()*1e6)}`;
     const employeeResult = await db.prepare(`
       INSERT INTO employees (name, uuid, hex_value, is_active)
       VALUES (?, ?, ?, 1)
-    `).bind(data.name, data.uuid, data.hex_value || stringToHex(data.name.trim().split(/\s+/)[0] || data.name)).run();
+    `).bind(
+      data.name,
+      generatedUuid,
+      data.hex_value || stringToHex(data.name.trim().split(/\s+/)[0] || data.name)
+    ).run();
+    console.log('👤 Creating employee:', { name: data.name, uuid: generatedUuid });
     
     if (!employeeResult.success) {
       return c.json({ error: "Failed to create employee" }, 500);
@@ -188,25 +198,50 @@ app.post("/api/employees", authMiddleware, zValidator("json", CreateEmployeeSche
     const hexValue = data.hex_value || stringToHex(firstName);
     
     // Then create the employee details
-    const detailsResult = await db.prepare(`
-      INSERT INTO employee_details (
-        employee_id, hex_value, role, department, emp_id, 
-        email, phone, hire_date, manager, location, notes
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(
-      employeeId,
-      hexValue,
-      data.role,
-      data.department,
-      data.emp_id || null,
-      data.email || null,
-      data.phone || null,
-      data.hire_date || null,
-      data.manager || null,
-      data.location || null,
-      data.notes || null
-    ).run();
+    // Try inserting with working_mode if the column exists; otherwise fallback without it
+    let detailsResult;
+    try {
+      detailsResult = await db.prepare(`
+        INSERT INTO employee_details (
+          employee_id, hex_value, role, department, emp_id, 
+          email, phone, hire_date, manager, location, notes, working_mode
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        employeeId,
+        hexValue,
+        data.role,
+        data.department,
+        data.emp_id || null,
+        data.email || null,
+        data.phone || null,
+        data.hire_date || null,
+        data.manager || null,
+        data.location || null,
+        data.notes || null,
+  ((data as unknown as { working_mode?: string }).working_mode) || 'Office'
+      ).run();
+    } catch {
+      detailsResult = await db.prepare(`
+        INSERT INTO employee_details (
+          employee_id, hex_value, role, department, emp_id, 
+          email, phone, hire_date, manager, location, notes
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        employeeId,
+        hexValue,
+        data.role,
+        data.department,
+        data.emp_id || null,
+        data.email || null,
+        data.phone || null,
+        data.hire_date || null,
+        data.manager || null,
+        data.location || null,
+        data.notes || null
+      ).run();
+    }
     
     if (!detailsResult.success) {
       // If details creation fails, we should delete the employee
@@ -257,6 +292,126 @@ app.post("/api/employees", authMiddleware, zValidator("json", CreateEmployeeSche
     return c.json({ error: "Failed to create employee. Name, hex value, or employee ID may already exist." }, 400);
   }
 });
+
+  // Update employee (name/active) and details (role, department, contacts, hex_value)
+  app.patch("/api/employees/:id", authMiddleware, zValidator("json", UpdateEmployeeSchema), async (c) => {
+    const employeeId = parseInt(c.req.param("id"));
+    const data = c.req.valid("json");
+    const db = c.env.DB;
+
+    try {
+      // Build update for employees table
+      const empSets: string[] = [];
+      const empParams: Array<string | number> = [];
+      if (typeof data.name !== 'undefined') { empSets.push('name = ?'); empParams.push(data.name); }
+      if (typeof data.hex_value !== 'undefined') { empSets.push('hex_value = ?'); empParams.push(data.hex_value); }
+      if (typeof data.is_active !== 'undefined') { empSets.push('is_active = ?'); empParams.push(data.is_active); }
+
+      if (empSets.length) {
+        await db.prepare(`UPDATE employees SET ${empSets.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+          .bind(...empParams, employeeId).run();
+      }
+
+      // Build update for employee_details table
+      const detSets: string[] = [];
+      const detParams: Array<string | number | null> = [];
+      if (typeof data.hex_value !== 'undefined') { detSets.push('hex_value = ?'); detParams.push(data.hex_value); }
+      if (typeof data.role !== 'undefined') { detSets.push('role = ?'); detParams.push(data.role); }
+      if (typeof data.department !== 'undefined') { detSets.push('department = ?'); detParams.push(data.department); }
+      if (typeof data.emp_id !== 'undefined') { detSets.push('emp_id = ?'); detParams.push(data.emp_id ?? null); }
+      if (typeof data.email !== 'undefined') { detSets.push('email = ?'); detParams.push(data.email ?? null); }
+      if (typeof data.phone !== 'undefined') { detSets.push('phone = ?'); detParams.push(data.phone ?? null); }
+      if (typeof data.hire_date !== 'undefined') { detSets.push('hire_date = ?'); detParams.push(data.hire_date ?? null); }
+      if (typeof data.manager !== 'undefined') { detSets.push('manager = ?'); detParams.push(data.manager ?? null); }
+      if (typeof data.location !== 'undefined') { detSets.push('location = ?'); detParams.push(data.location ?? null); }
+      if (typeof data.notes !== 'undefined') { detSets.push('notes = ?'); detParams.push(data.notes ?? null); }
+      if (typeof (data as unknown as { working_mode?: string }).working_mode !== 'undefined') {
+        const wm = (data as unknown as { working_mode?: string }).working_mode ?? null;
+        detSets.push('working_mode = ?'); detParams.push(wm);
+      }
+
+      if (detSets.length) {
+        try {
+          await db.prepare(`UPDATE employee_details SET ${detSets.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE employee_id = ?`)
+            .bind(...detParams, employeeId).run();
+  } catch {
+          // Retry excluding working_mode in case the column doesn't exist yet
+          const filteredSets: string[] = [];
+          const filteredParams: Array<string | number | null> = [];
+          detSets.forEach((set, idx) => {
+            if (!set.startsWith('working_mode')) {
+              filteredSets.push(set);
+              filteredParams.push(detParams[idx]);
+            }
+          });
+          if (filteredSets.length) {
+            await db.prepare(`UPDATE employee_details SET ${filteredSets.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE employee_id = ?`)
+              .bind(...filteredParams, employeeId).run();
+          }
+        }
+      }
+
+      // Return updated record
+      const employee = await db.prepare(`
+        SELECT 
+          e.id, e.name, e.uuid, e.is_active, e.created_at, e.updated_at,
+          ed.id as details_id, ed.hex_value, ed.role, ed.department, ed.emp_id,
+          ed.email, ed.phone, ed.hire_date, ed.manager, ed.location, ed.notes,
+          ed.created_at as details_created_at, ed.updated_at as details_updated_at
+        FROM employees e
+        LEFT JOIN employee_details ed ON e.id = ed.employee_id
+        WHERE e.id = ?
+      `).bind(employeeId).first() as unknown as EmployeeWithDetailsRow | undefined;
+
+      if (!employee) return c.json({ error: 'Employee not found' }, 404);
+
+      const responseEmployee = {
+        id: employee.id,
+        name: employee.name,
+        uuid: employee.uuid,
+        is_active: employee.is_active,
+        created_at: employee.created_at,
+        updated_at: employee.updated_at,
+        details: employee.details_id ? {
+          id: employee.details_id,
+          employee_id: employee.id,
+          hex_value: employee.hex_value,
+          role: employee.role,
+          department: employee.department,
+          emp_id: employee.emp_id,
+          email: employee.email,
+          phone: employee.phone,
+          hire_date: employee.hire_date,
+          manager: employee.manager,
+          location: employee.location,
+          notes: employee.notes,
+          created_at: employee.details_created_at,
+          updated_at: employee.details_updated_at,
+        } : null
+      };
+
+      return c.json(responseEmployee);
+    } catch (error) {
+      console.error('Update error:', error);
+      return c.json({ error: 'Failed to update employee' }, 400);
+    }
+  });
+
+  // Soft delete (deactivate) employee
+  app.delete("/api/employees/:id", authMiddleware, async (c) => {
+    const employeeId = parseInt(c.req.param("id"));
+    const db = c.env.DB;
+
+    try {
+      const result = await db.prepare(`UPDATE employees SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+        .bind(employeeId).run();
+      if (!result.success) return c.json({ error: 'Failed to deactivate employee' }, 400);
+      return c.json({ success: true });
+    } catch (error) {
+      console.error('Delete error:', error);
+      return c.json({ error: 'Failed to delete employee' }, 400);
+    }
+  });
 
 // ESP32 detection endpoint - now searches by hex value in employee_details
 app.post("/api/esp32/detect", zValidator("json", ESP32DetectionSchema), async (c) => {
@@ -361,6 +516,26 @@ app.post("/api/esp32/detect", zValidator("json", ESP32DetectionSchema), async (c
     return c.json(response);
   } else {
     return c.json({ error: "Failed to record attendance" }, 500);
+  }
+});
+
+// Hard delete employee and related records (attendance + details)
+app.delete("/api/employees/:id/hard", authMiddleware, async (c) => {
+  const employeeId = parseInt(c.req.param("id"));
+  const db = c.env.DB;
+
+  try {
+    // Remove attendance records
+    await db.prepare(`DELETE FROM attendance_records WHERE employee_id = ?`).bind(employeeId).run();
+    // Remove details
+    await db.prepare(`DELETE FROM employee_details WHERE employee_id = ?`).bind(employeeId).run();
+    // Remove employee
+    const result = await db.prepare(`DELETE FROM employees WHERE id = ?`).bind(employeeId).run();
+    if (!result.success) return c.json({ error: 'Failed to delete employee' }, 400);
+    return c.json({ success: true });
+  } catch (error) {
+    console.error('Hard delete error:', error);
+    return c.json({ error: 'Failed to hard delete employee' }, 400);
   }
 });
 

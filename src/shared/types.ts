@@ -19,6 +19,7 @@ export const EmployeeDetailsSchema = z.object({
   hex_value: z.string().nullable(),
   role: z.string(),
   department: z.string(),
+  working_mode: z.string().optional().nullable(),
   emp_id: z.string().nullable(), // Employee ID/Badge number
   email: z.string().nullable(),
   phone: z.string().nullable(),
@@ -71,10 +72,11 @@ export type AttendanceRecordWithEmployee = z.infer<typeof AttendanceRecordWithEm
 // API request schemas
 export const CreateEmployeeSchema = z.object({
   name: z.string().min(1),
-  uuid: z.string().min(1), // Company UUID
+  uuid: z.string().min(1),
   hex_value: z.string().min(1), // Employee name in hex
   role: z.string().min(1),
   department: z.string().min(1),
+  working_mode: z.enum(['WorkFromHome','Hybrid','Office']).optional(),
   emp_id: z.string().optional(),
   email: z.string().email().optional().or(z.literal("")),
   phone: z.string().optional(),
@@ -82,6 +84,23 @@ export const CreateEmployeeSchema = z.object({
   manager: z.string().optional(),
   location: z.string().optional(),
   notes: z.string().optional(),
+});
+
+// Partial update schema for editing employee and details
+export const UpdateEmployeeSchema = z.object({
+  name: z.string().min(1).optional(),
+  hex_value: z.string().min(1).optional(),
+  role: z.string().min(1).optional(),
+  department: z.string().min(1).optional(),
+  working_mode: z.enum(['WorkFromHome','Hybrid','Office']).optional(),
+  emp_id: z.string().optional(),
+  email: z.string().email().optional().or(z.literal("")),
+  phone: z.string().optional(),
+  hire_date: z.string().optional(), // YYYY-MM-DD format
+  manager: z.string().optional(),
+  location: z.string().optional(),
+  notes: z.string().optional(),
+  is_active: z.number().int().optional(),
 });
 
 // ESP32 detection schema - hex value is required; optional action for checkout
@@ -99,6 +118,7 @@ export const AttendanceStatsSchema = z.object({
 });
 
 export type CreateEmployeeRequest = z.infer<typeof CreateEmployeeSchema>;
+export type UpdateEmployeeRequest = z.infer<typeof UpdateEmployeeSchema>;
 export type ESP32DetectionRequest = z.infer<typeof ESP32DetectionSchema>;
 export type AttendanceStats = z.infer<typeof AttendanceStatsSchema>;
 
@@ -120,6 +140,9 @@ export const EmployeeDepartments = [
   'General',
   'Human Resources',
   'Engineering',
+  'Project Coordinator',
+  'Project Manager',
+  'UI/UX Designer',
   'Sales',
   'Marketing',
   'Finance',
@@ -127,8 +150,16 @@ export const EmployeeDepartments = [
   'Customer Support',
   'Legal',
   'IT',
+  'IOT/Embedded Developer',
+  'IOT/Embedded App Developer',
   'Product',
   'Design',
   'Research',
   'Quality Assurance'
+] as const;
+
+export const WorkingModes = [
+  'WorkFromHome',
+  'Hybrid',
+  'Office'
 ] as const;

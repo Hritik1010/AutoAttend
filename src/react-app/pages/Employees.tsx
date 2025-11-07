@@ -3,7 +3,7 @@ import { useEmployees } from '@/react-app/hooks/useApi';
 import { Plus, Search, Users, Filter } from 'lucide-react';
 import EmployeeCard from '@/react-app/components/EmployeeCard';
 import LoadingSpinner from '@/react-app/components/LoadingSpinner';
-import { EmployeeDepartments, EmployeeRoles } from '@/shared/types';
+import { EmployeeDepartments, EmployeeRoles, WorkingModes } from '@/shared/types';
 import type { CreateEmployeeRequest } from '@/shared/types';
 
 export default function Employees() {
@@ -21,6 +21,7 @@ export default function Employees() {
     hex_value: '',
     role: 'Employee',
     department: 'General',
+    working_mode: 'Office',
     emp_id: '',
     email: '',
     phone: '',
@@ -59,6 +60,7 @@ export default function Employees() {
         hex_value: '',
         role: 'Employee',
         department: 'General',
+        working_mode: 'Office',
         emp_id: '',
         email: '',
         phone: '',
@@ -359,6 +361,23 @@ export default function Employees() {
               </div>
 
               <div>
+                {/* Working Mode (before Location) */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Working Mode
+                    </label>
+                    <select
+                      value={formData.working_mode}
+                      onChange={(e) => setFormData(prev => ({ ...prev, working_mode: e.target.value as typeof WorkingModes[number] }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 appearance-none"
+                    >
+                      {WorkingModes.map(mode => (
+                        <option key={mode} value={mode}>{mode}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Location
                 </label>

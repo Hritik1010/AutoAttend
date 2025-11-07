@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import type { EmployeeWithDetails, AttendanceRecordWithEmployee, AttendanceStats, CreateEmployeeRequest } from '@/shared/types';
+import type { EmployeeWithDetails, AttendanceRecordWithEmployee, AttendanceStats, CreateEmployeeRequest, UpdateEmployeeRequest } from '@/shared/types';
 
 const API_BASE = '';
 
@@ -27,25 +27,60 @@ export function useEmployees() {
   }, []);
 
   const createEmployee = async (employeeData: CreateEmployeeRequest) => {
-    try {
-      const response = await fetch(`${API_BASE}/api/employees`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(employeeData),
-      });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to create employee');
-      }
-      const newEmployee = await response.json();
-      setEmployees(prev => [...prev, newEmployee]);
-      return newEmployee;
-    } catch (err) {
-      throw err;
+    const response = await fetch(`${API_BASE}/api/employees`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(employeeData),
+    });
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to create employee');
     }
+    const newEmployee = await response.json();
+    setEmployees(prev => [...prev, newEmployee]);
+    return newEmployee;
   };
 
-  return { employees, loading, error, createEmployee, refetch: fetchEmployees };
+  const updateEmployee = async (id: number, updates: UpdateEmployeeRequest) => {
+    const response = await fetch(`${API_BASE}/api/employees/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || 'Failed to update employee');
+    }
+    const updated = await response.json();
+    setEmployees(prev => prev.map(e => e.id === id ? updated : e));
+    return updated as EmployeeWithDetails;
+  };
+
+  const deleteEmployee = async (id: number) => {
+    const response = await fetch(`${API_BASE}/api/employees/${id}`, {
+      method: 'DELETE'
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || 'Failed to delete employee');
+    }
+    setEmployees(prev => prev.filter(e => e.id !== id));
+    return true;
+  };
+
+  const deleteEmployeeHard = async (id: number) => {
+    const response = await fetch(`${API_BASE}/api/employees/${id}/hard`, {
+      method: 'DELETE'
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || 'Failed to hard delete employee');
+    }
+    setEmployees(prev => prev.filter(e => e.id !== id));
+    return true;
+  };
+
+  return { employees, loading, error, createEmployee, updateEmployee, deleteEmployee, deleteEmployeeHard, refetch: fetchEmployees };
 }
 
 export function useAttendance(limit?: number) {
@@ -70,6 +105,7 @@ export function useAttendance(limit?: number) {
 
   useEffect(() => {
     fetchAttendance();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [limit]);
 
   return { attendance, loading, error, refetch: fetchAttendance };
