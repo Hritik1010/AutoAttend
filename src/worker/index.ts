@@ -955,3 +955,81 @@ app.get('/api/attendance/export', authMiddleware, async (c) => {
     }
   });
 });
+
+// ==========================
+// OTA Endpoints (R2-backed)
+// ==========================
+
+// Public: manifest describing latest firmware
+app.get('/api/ota/manifest', async (c) => {
+  const r2 = c.env.R2_BUCKET;
+  const obj = await r2.get('ota/manifest.json');
+  if (!obj) return c.json({ error: 'No manifest found' }, 404);
+  const text = await obj.text();
+  const data = JSON.parse(text);
+  // Enrich with relative download URL if not present
+  if (!data.download_url && data.key) {
+    data.download_url = `/api/ota/download?key=${encodeURIComponent(data.key)}`;
+  }
+  return c.json(data);
+});
+
+// Public: stream firmware from R2
+app.get('/api/ota/download', async (c) => {
+  const r2 = c.env.R2_BUCKET;
+  const key = c.req.query('key');
+  let downloadKey = key || '';
+  if (!downloadKey) {
+    // fallback to manifest
+    const man = await r2.get('ota/manifest.json');
+    if (!man) return c.json({ error: 'No manifest found' }, 404);
+    const data = JSON.parse(await man.text());
+    downloadKey = data.key;
+  }
+  if (!downloadKey) return c.json({ error: 'Missing key' }, 400);
+  const obj = await r2.get(downloadKey);
+  if (!obj) return c.json({ error: 'Firmware not found' }, 404);
+  return new Response(obj.body, {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': String(obj.size || 0),
+      'Content-Disposition': 'attachment; filename="firmware.bin"'
+    }
+  });
+});
+
+// Protected: upload new firmware + update manifest
+app.post('/api/ota/upload', authMiddleware, async (c) => {
+  const r2 = c.env.R2_BUCKET;
+  const form = await c.req.formData();
+  const version = String(form.get('version') || '').trim();
+  const file = form.get('firmware');
+  if (!version) return c.json({ error: 'version is required' }, 400);
+  if (!(file instanceof File)) return c.json({ error: 'firmware file required' }, 400);
+
+  const buf = await file.arrayBuffer();
+  const size = buf.byteLength;
+  const hash = await crypto.subtle.digest('SHA-256', buf);
+  const hashArray = Array.from(new Uint8Array(hash));
+  const sha256 = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+  const key = `ota/firmware-${version}.bin`;
+  await r2.put(key, buf, {
+    httpMetadata: {
+      contentType: 'application/octet-stream'
+    }
+  });
+
+  const manifest = {
+    version,
+    key,
+    size,
+    sha256,
+    uploaded_at: new Date().toISOString(),
+  };
+  await r2.put('ota/manifest.json', JSON.stringify(manifest, null, 2), {
+    httpMetadata: { contentType: 'application/json' }
+  });
+  return c.json({ ok: true, manifest, download_url: `/api/ota/download?key=${encodeURIComponent(key)}` });
+});

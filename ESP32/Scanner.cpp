@@ -29,8 +29,13 @@ const char* WIFI_PASS = "Trh@1234";
 //   http://192.168.1.50:5175
 const char* SERVER_HOST = "http://192.168.2.177:5175"; 
 const char* SERVER_ENDPOINT = "/api/esp32/detect"; // Worker endpoint (hex only)
-const char* OTA_MANIFEST_ENDPOINT = "/api/ota/manifest";
-const char* OTA_DOWNLOAD_ENDPOINT = "/api/ota/download";
+// OTA endpoints
+const char* OTA_MANIFEST_PATH = "/api/ota/manifest"; // returns JSON manifest
+// Build-time firmware version of this device
+static const char* CURRENT_FIRMWARE_VERSION = "1.0.0";
+// How often to check for updates (seconds)
+static const uint32_t OTA_CHECK_INTERVAL_SECONDS = 600; // 10 minutes
+static uint32_t nextOtaCheck = 0;
 
 // How long to ignore repeat POSTs for the same event (seconds)
 const uint32_t SEEN_TTL_SECONDS = 10;
@@ -50,9 +55,6 @@ static std::set<std::string> presentDevices;
 
 #define MAX_DEVICES 5  // Limit number of tracked devices to prevent memory issues
 static std::set<std::string> devicesWithTarget;
-static String currentFirmwareVersion = "0.0.0"; // set your initial firmware version
-static unsigned long lastOtaCheckMs = 0;
-static const unsigned long OTA_CHECK_INTERVAL_MS = 60UL * 1000UL; // check every 60s
 
 // Helper: convert string to lowercase (with memory limit)
 std::string toLowerCase(const std::string &str) {
@@ -452,62 +454,6 @@ void setup() {
 }
 
 void loop() {
-  // Periodic OTA check
-  if (millis() - lastOtaCheckMs > OTA_CHECK_INTERVAL_MS) {
-    lastOtaCheckMs = millis();
-    if (WiFi.status() == WL_CONNECTED) {
-      String url = String(SERVER_HOST) + String(OTA_MANIFEST_ENDPOINT);
-      HTTPClient http;
-      http.begin(url);
-      int code = http.GET();
-      if (code == 200) {
-        String body = http.getString();
-        // very small JSON parse: find "version":"..."
-        int vi = body.indexOf("\"version\"");
-        if (vi >= 0) {
-          int qi = body.indexOf('"', vi + 9);
-          int qj = qi >= 0 ? body.indexOf('"', qi + 1) : -1;
-          String ver = (qi >= 0 && qj > qi) ? body.substring(qi + 1, qj) : "";
-          if (ver.length() && ver != currentFirmwareVersion) {
-            // Download and apply
-            String durl = String(SERVER_HOST) + String(OTA_DOWNLOAD_ENDPOINT) + String("?version=") + ver;
-            HTTPClient dhttp;
-            dhttp.begin(durl);
-            int dcode = dhttp.GET();
-            if (dcode == 200) {
-              int len = dhttp.getSize();
-              WiFiClient * stream = dhttp.getStreamPtr();
-              if (!Update.begin(len > 0 ? len : (1024*1024))) { // allocate up to 1MB default
-                Serial.println("OTA Update begin failed");
-              } else {
-                size_t written = Update.writeStream(*stream);
-                if (written == (size_t)len || len == -1) {
-                  if (Update.end()) {
-                    if (Update.isFinished()) {
-                      Serial.println("OTA Update successful. Rebooting...");
-                      currentFirmwareVersion = ver;
-                      ESP.restart();
-                    } else {
-                      Serial.println("OTA Update not finished.");
-                    }
-                  } else {
-                    Serial.printf("OTA Update end error: %s\n", Update.errorString());
-                  }
-                } else {
-                  Serial.printf("OTA write incomplete: %u of %d\n", (unsigned)written, len);
-                }
-              }
-            } else {
-              Serial.printf("Firmware download failed: %d\n", dcode);
-            }
-            dhttp.end();
-          }
-        }
-      }
-      http.end();
-    }
-  }
-
   devicesWithTarget.clear();
 
   static MyAdvertisedDeviceCallbacks myCallbacks;
@@ -546,4 +492,126 @@ void loop() {
 
   Serial.println("⏳ Waiting 4 seconds before next scan...\n");
   delay(4000);  // 4 second delay + 2 second scan = ~6 second total cycle
+
+  // OTA periodic check
+  uint32_t nowSec = millis() / 1000;
+  if (WiFi.status() == WL_CONNECTED && nowSec >= nextOtaCheck) {
+    nextOtaCheck = nowSec + OTA_CHECK_INTERVAL_SECONDS;
+    checkForOtaUpdate();
+  }
+}
+
+// ----------------------- OTA Support -----------------------
+void checkForOtaUpdate() {
+  Serial.println("\n🔄 Checking OTA manifest...");
+  String url = String(SERVER_HOST) + String(OTA_MANIFEST_PATH);
+  HTTPClient http;
+  http.begin(url);
+  int code = http.GET();
+  if (code != 200) {
+    Serial.printf("⚠️ OTA manifest fetch failed code=%d\n", code);
+    http.end();
+    return;
+  }
+  String json = http.getString();
+  http.end();
+  // Very minimal JSON parsing (avoid full parser): look for "version":"X"
+  int vIdx = json.indexOf("\"version\"");
+  if (vIdx < 0) { Serial.println("⚠️ Manifest missing version field"); return; }
+  int colon = json.indexOf(':', vIdx);
+  int quoteStart = json.indexOf('"', colon + 1);
+  int quoteEnd = json.indexOf('"', quoteStart + 1);
+  if (quoteStart < 0 || quoteEnd < 0) { Serial.println("⚠️ Unable to parse version"); return; }
+  String remoteVersion = json.substring(quoteStart + 1, quoteEnd);
+  if (remoteVersion.length() == 0) { Serial.println("⚠️ Empty remote version"); return; }
+  Serial.printf("Manifest version=%s current=%s\n", remoteVersion.c_str(), CURRENT_FIRMWARE_VERSION);
+  if (remoteVersion == CURRENT_FIRMWARE_VERSION) {
+    Serial.println("✅ Firmware up to date");
+    return;
+  }
+  Serial.println("⬆️ New firmware available, starting download...");
+  // Parse key field for download path
+  int kIdx = json.indexOf("\"key\"");
+  String key;
+  if (kIdx >= 0) {
+    int kColon = json.indexOf(':', kIdx);
+    int kQuoteStart = json.indexOf('"', kColon + 1);
+    int kQuoteEnd = json.indexOf('"', kQuoteStart + 1);
+    if (kQuoteStart > 0 && kQuoteEnd > kQuoteStart) {
+      key = json.substring(kQuoteStart + 1, kQuoteEnd);
+    }
+  }
+  String downloadUrl;
+  if (key.length() > 0) {
+    downloadUrl = String(SERVER_HOST) + String("/api/ota/download?key=") + key;
+  } else {
+    // fallback to manifest-based download (no key param)
+    downloadUrl = String(SERVER_HOST) + String("/api/ota/download");
+  }
+  applyFirmware(downloadUrl, remoteVersion);
+}
+
+bool applyFirmware(const String &url, const String &newVersion) {
+  Serial.printf("📥 Downloading firmware from %s\n", url.c_str());
+  HTTPClient http;
+  http.begin(url);
+  int code = http.GET();
+  if (code != 200) {
+    Serial.printf("❌ Firmware download failed code=%d\n", code);
+    http.end();
+    return false;
+  }
+  int contentLength = http.getSize();
+  WiFiClient * stream = http.getStreamPtr();
+  if (contentLength <= 0) {
+    Serial.println("❌ Invalid content length for firmware");
+    http.end();
+    return false;
+  }
+  Serial.printf("Firmware size: %d bytes\n", contentLength);
+  if (!Update.begin(contentLength)) { // allocate space
+    Serial.println("❌ Update.begin failed");
+    http.end();
+    return false;
+  }
+  size_t written = 0;
+  uint8_t buff[1024];
+  while (http.connected() && (written < (size_t)contentLength)) {
+    size_t avail = stream->available();
+    if (avail) {
+      if (avail > sizeof(buff)) avail = sizeof(buff);
+      int readLen = stream->readBytes(buff, avail);
+      if (readLen > 0) {
+        if (Update.write(buff, readLen) != (size_t)readLen) {
+          Serial.println("❌ Update write failed");
+          Update.abort();
+          http.end();
+          return false;
+        }
+        written += readLen;
+      }
+    }
+    delay(1);
+  }
+  if (written != (size_t)contentLength) {
+    Serial.printf("❌ Written %d bytes but expected %d\n", (int)written, contentLength);
+    Update.abort();
+    http.end();
+    return false;
+  }
+  if (!Update.end()) {
+    Serial.printf("❌ Update.end failed error=%d\n", Update.getError());
+    http.end();
+    return false;
+  }
+  if (!Update.isFinished()) {
+    Serial.println("❌ Update not finished");
+    http.end();
+    return false;
+  }
+  Serial.println("✅ Firmware updated successfully. Rebooting...");
+  http.end();
+  delay(1000);
+  ESP.restart();
+  return true;
 }

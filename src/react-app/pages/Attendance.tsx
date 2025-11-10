@@ -549,7 +549,8 @@ function DailySummaryTable({ records, onSelect }: { records: ReturnType<typeof u
     date: string;
     first_checkin?: string; // time
     last_checkout?: string; // time
-    break_count: number;
+    break_count: number; // retained internally (not displayed now)
+    break_seconds: number; // total break seconds for the day
     worked_seconds: number;
   };
 
@@ -572,6 +573,7 @@ function DailySummaryTable({ records, onSelect }: { records: ReturnType<typeof u
     let breakCount = 0;
     let totalBreakSec = 0;
     let lastSeenCheckoutTs: number | null = null;
+    let lastEventStatus: 'checkin' | 'checkout' | null = null;
     for (const r of arr) {
       const ts = new Date(r.recorded_at).getTime();
       if (r.status === 'checkin') {
@@ -586,17 +588,47 @@ function DailySummaryTable({ records, onSelect }: { records: ReturnType<typeof u
         lastCheckoutTs = ts;
         lastSeenCheckoutTs = ts;
       }
+      lastEventStatus = r.status;
     }
-    const worked = (firstCheckinTs != null && lastCheckoutTs != null)
-      ? Math.max(0, (lastCheckoutTs - firstCheckinTs) / 1000 - totalBreakSec)
-      : 0;
+    // Compute worked time; for current day and if last event is a checkin, show running time until now.
+    let worked = 0;
+    if (firstCheckinTs != null) {
+      const todayIso = new Date().toISOString().split('T')[0];
+      const nowTs = Date.now();
+      let effectiveEndTs: number | null = null;
+      if (g.date === todayIso && lastEventStatus === 'checkin') {
+        effectiveEndTs = nowTs; // running shift
+      } else if (lastCheckoutTs != null) {
+        effectiveEndTs = lastCheckoutTs;
+      }
+      if (effectiveEndTs != null) {
+        const ongoingBreakSec = (g.date === todayIso && lastSeenCheckoutTs != null)
+          ? Math.max(0, (nowTs - lastSeenCheckoutTs) / 1000)
+          : 0;
+        worked = Math.max(0, (effectiveEndTs - firstCheckinTs) / 1000 - (totalBreakSec + ongoingBreakSec));
+      }
+    }
     summaries.push({
       employee_id: g.employee_id,
       employee_name: g.employee_name,
       date: g.date,
       first_checkin: firstCheckinTs != null ? toTime(new Date(firstCheckinTs).toISOString()) : undefined,
-      last_checkout: lastCheckoutTs != null ? toTime(new Date(lastCheckoutTs).toISOString()) : undefined,
+      // Last checkout is only finalized/displayed after end-of-day (23:59) local time.
+      last_checkout: (() => {
+        if (lastCheckoutTs == null) return undefined;
+        const todayIso = new Date().toISOString().split('T')[0];
+        if (g.date !== todayIso) {
+          return toTime(new Date(lastCheckoutTs).toISOString());
+        }
+        // Current date: show only if we've passed 23:59 of that date (i.e., the day ended)
+        const endOfDay = new Date(`${g.date}T23:59:00`);
+        if (new Date() >= endOfDay) {
+          return toTime(new Date(lastCheckoutTs).toISOString());
+        }
+        return undefined; // Pending until day end
+      })(),
       break_count: breakCount,
+      break_seconds: totalBreakSec,
       worked_seconds: worked,
     });
   }
@@ -626,7 +658,7 @@ function DailySummaryTable({ records, onSelect }: { records: ReturnType<typeof u
             <th className="px-3 py-2 text-left">First Checkin</th>
             <th className="px-3 py-2 text-left">Last Checkout</th>
             <th className="px-3 py-2 text-left">Date</th>
-            <th className="px-3 py-2 text-left">Total No. of breaks</th>
+            <th className="px-3 py-2 text-left">Total hours as break taken</th>
             <th className="px-3 py-2 text-left">Total No. of Hours Worked in 24hrs</th>
           </tr>
         </thead>
@@ -643,9 +675,9 @@ function DailySummaryTable({ records, onSelect }: { records: ReturnType<typeof u
                 </button>
               </td>
               <td className="px-3 py-2 font-mono text-xs text-gray-700">{r.first_checkin || '-'}</td>
-              <td className="px-3 py-2 font-mono text-xs text-gray-700">{r.last_checkout || '-'}</td>
+              <td className="px-3 py-2 font-mono text-xs text-gray-700">{r.last_checkout || (r.date === new Date().toISOString().split('T')[0] ? 'Pending' : '-')}</td>
               <td className="px-3 py-2 font-mono text-xs text-gray-700">{r.date}</td>
-              <td className="px-3 py-2 text-gray-700">{r.break_count}</td>
+              <td className="px-3 py-2 text-gray-700">{formatHM(r.break_seconds)}</td>
               <td className="px-3 py-2 text-gray-900">{formatHM(r.worked_seconds)}</td>
             </tr>
           ))}

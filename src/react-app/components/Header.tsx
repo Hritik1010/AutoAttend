@@ -1,15 +1,14 @@
 import { useAuth } from "@/react-app/hooks/useAuth";
 import { useLocation, Link } from "react-router";
 import { LogOut, Users, Clock, BarChart3, Menu, X, UploadCloud } from 'lucide-react';
-import { useState, useRef } from 'react';
+import { useState } from 'react';
+import OtaModal from '@/react-app/components/OtaModal';
 
 export default function Header() {
   const { user, logout } = useAuth();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [otaOpen, setOtaOpen] = useState(false);
-  const versionRef = useRef<HTMLInputElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
 
   const navigation = [
     { name: 'Dashboard', href: '/', icon: BarChart3 },
@@ -68,6 +67,14 @@ export default function Header() {
 
           {/* User Menu */}
           <div className="flex items-center space-x-4">
+            {/* OTA Button */}
+            <button
+              onClick={() => setOtaOpen(true)}
+              className="hidden sm:inline-flex items-center px-3 py-2 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700"
+              title="OTA Update"
+            >
+              <UploadCloud className="w-4 h-4 mr-2" /> OTA Update
+            </button>
             {/* User Info */}
             <div className="hidden sm:flex items-center space-x-3">
               <div className="text-right">
@@ -82,14 +89,6 @@ export default function Header() {
             </div>
 
             {/* Logout Button */}
-              {/* OTA Update Button */}
-              <button
-                onClick={() => setOtaOpen(true)}
-                className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                title="OTA Update"
-              >
-                <UploadCloud className="w-5 h-5" />
-              </button>
             <button
               onClick={handleLogout}
               className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
@@ -135,6 +134,14 @@ export default function Header() {
             
             {/* Mobile User Info */}
             <div className="mt-4 pt-4 border-t border-gray-200">
+              <div className="px-4 mb-3">
+                <button
+                  onClick={() => { setMobileMenuOpen(false); setOtaOpen(true); }}
+                  className="w-full inline-flex items-center justify-center px-4 py-2 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700"
+                >
+                  <UploadCloud className="w-4 h-4 mr-2" /> OTA Update
+                </button>
+              </div>
               <div className="flex items-center space-x-3 px-4">
                 <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center">
                   <span className="text-white font-medium">
@@ -149,56 +156,8 @@ export default function Header() {
             </div>
           </div>
         )}
+        {otaOpen && <OtaModal onClose={() => setOtaOpen(false)} />}
       </div>
-      {/* OTA Modal */}
-      {otaOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-          <div className="w-full max-w-md p-6 bg-white rounded-lg shadow-xl">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">ESP32 OTA Update</h3>
-              <button onClick={() => setOtaOpen(false)} className="p-1 text-gray-500 hover:text-gray-700"><X className="w-5 h-5"/></button>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="block mb-1 text-sm text-gray-700">Version</label>
-                <input ref={versionRef} type="text" placeholder="e.g. 1.0.3" className="w-full px-3 py-2 border rounded-md"/>
-              </div>
-              <div>
-                <label className="block mb-1 text-sm text-gray-700">Firmware (.bin)</label>
-                <input ref={fileRef} type="file" accept=".bin" className="w-full"/>
-              </div>
-              <div className="flex justify-end space-x-2">
-                <button onClick={() => setOtaOpen(false)} className="px-3 py-2 text-gray-700 bg-gray-100 rounded-md">Cancel</button>
-                <button
-                  onClick={async () => {
-                    const version = versionRef.current?.value?.trim();
-                    const file = fileRef.current?.files?.[0];
-                    if (!version) { alert('Enter version'); return; }
-                    if (!file) { alert('Select firmware .bin'); return; }
-                    const form = new FormData();
-                    form.append('version', version);
-                    form.append('firmware', file);
-                    try {
-                      const res = await fetch('/api/ota/upload', { method: 'POST', body: form });
-                      if (!res.ok) {
-                        const data = await res.json().catch(() => ({}));
-                        throw new Error(data.error || 'Upload failed');
-                      }
-                      alert('Firmware uploaded. Devices will update on next check.');
-                      setOtaOpen(false);
-                    } catch (e) {
-                      alert(e instanceof Error ? e.message : 'Upload error');
-                    }
-                  }}
-                  className="px-4 py-2 text-white bg-blue-600 rounded-md hover:bg-blue-700"
-                >
-                  Upload
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </header>
   );
 }
