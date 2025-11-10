@@ -1,11 +1,12 @@
-import { Clock, User, Building, Badge, Calendar } from 'lucide-react';
+import { Clock, User, Calendar } from 'lucide-react';
 import type { AttendanceRecordWithEmployee } from '@/shared/types';
 
 interface AttendanceCardProps {
   record: AttendanceRecordWithEmployee;
+  statusSuffix?: string; // e.g., "Short break 3m", "Lunch break 42m", "First of day", "Last of day"
 }
 
-export default function AttendanceCard({ record }: AttendanceCardProps) {
+export default function AttendanceCard({ record, statusSuffix }: AttendanceCardProps) {
   const isCheckIn = record.status === 'checkin';
   
   const formatTime = (timestamp: string) => {
@@ -27,7 +28,7 @@ export default function AttendanceCard({ record }: AttendanceCardProps) {
   };
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all duration-200 p-6">
+    <div className="p-6 transition-all duration-200 bg-white border border-gray-200 shadow-sm rounded-xl hover:shadow-md">
       <div className="flex items-start justify-between">
         {/* Employee Info */}
         <div className="flex items-center space-x-4">
@@ -38,20 +39,8 @@ export default function AttendanceCard({ record }: AttendanceCardProps) {
           </div>
           
           <div>
-            <h3 className="font-semibold text-gray-900 text-lg">{record.employee_name}</h3>
-            <div className="flex items-center space-x-4 text-sm text-gray-600 mt-1">
-              {record.employee_role && (
-                <div className="flex items-center space-x-1">
-                  <Badge className="w-3 h-3" />
-                  <span>{record.employee_role}</span>
-                </div>
-              )}
-              {record.employee_department && (
-                <div className="flex items-center space-x-1">
-                  <Building className="w-3 h-3" />
-                  <span>{record.employee_department}</span>
-                </div>
-              )}
+            <h3 className="text-lg font-semibold text-gray-900">{record.employee_name}</h3>
+            <div className="flex items-center mt-1 space-x-4 text-sm text-gray-600">
               {record.employee_emp_id && (
                 <span className="text-gray-500">ID: {record.employee_emp_id}</span>
               )}
@@ -65,12 +54,12 @@ export default function AttendanceCard({ record }: AttendanceCardProps) {
             ? 'bg-green-100 text-green-700 border border-green-200' 
             : 'bg-red-100 text-red-700 border border-red-200'
         }`}>
-          {isCheckIn ? 'Check In' : 'Check Out'}
+          {isCheckIn ? 'Check In' : 'Check Out'}{statusSuffix ? ` (${statusSuffix})` : ''}
         </div>
       </div>
 
       {/* Timestamp Info */}
-      <div className="mt-4 pt-4 border-t border-gray-100">
+      <div className="pt-4 mt-4 border-t border-gray-100">
         <div className="flex items-center justify-between text-sm">
           <div className="flex items-center space-x-4">
             <div className="flex items-center space-x-1 text-gray-600">
@@ -99,3 +88,4 @@ export default function AttendanceCard({ record }: AttendanceCardProps) {
     </div>
   );
 }
+

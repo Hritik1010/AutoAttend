@@ -55,6 +55,8 @@ export const AttendanceRecordSchema = z.object({
   year: z.number().optional(),
   created_at: z.string(),
   updated_at: z.string(),
+  break_type: z.enum(['short_break','lunch_break','break']).optional().nullable(),
+  break_duration_seconds: z.number().optional().nullable(),
 });
 
 export type AttendanceRecord = z.infer<typeof AttendanceRecordSchema>;

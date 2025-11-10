@@ -3,6 +3,7 @@
 #include <BLEDevice.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <Update.h>
 #include <cstdio>
 #include <set>
 #include <algorithm>
@@ -12,13 +13,24 @@
 const char* TARGET_UUID = "D7E1A3F4";
 
 // --- CONFIG: Update these for your network & AutoAttend server ---
-const char* WIFI_SSID = "Airtel_mayu_7965";
-const char* WIFI_PASS = "Air@52077";
+// const char* WIFI_SSID = "Airtel_mayu_7965";
+// const char* WIFI_PASS = "Air@52077";
+
+// const char* WIFI_SSID = "Ruchi Salaskar";
+// const char* WIFI_PASS = "tjou1662";
+
+// const char* WIFI_SSID = "iPhone";
+// const char* WIFI_PASS = "qwertyui";
+
+const char* WIFI_SSID = "Zoo_Studio_2.4";
+const char* WIFI_PASS = "Trh@1234";
 // IMPORTANT: set this to the machine running the dev server (same network)
 // Example if your laptop's IP is 192.168.1.50 and Vite dev uses 5175:
 //   http://192.168.1.50:5175
-const char* SERVER_HOST = "http://192.168.1.14:5175"; 
+const char* SERVER_HOST = "http://192.168.2.177:5175"; 
 const char* SERVER_ENDPOINT = "/api/esp32/detect"; // Worker endpoint (hex only)
+const char* OTA_MANIFEST_ENDPOINT = "/api/ota/manifest";
+const char* OTA_DOWNLOAD_ENDPOINT = "/api/ota/download";
 
 // How long to ignore repeat POSTs for the same event (seconds)
 const uint32_t SEEN_TTL_SECONDS = 10;
@@ -38,6 +50,9 @@ static std::set<std::string> presentDevices;
 
 #define MAX_DEVICES 5  // Limit number of tracked devices to prevent memory issues
 static std::set<std::string> devicesWithTarget;
+static String currentFirmwareVersion = "0.0.0"; // set your initial firmware version
+static unsigned long lastOtaCheckMs = 0;
+static const unsigned long OTA_CHECK_INTERVAL_MS = 60UL * 1000UL; // check every 60s
 
 // Helper: convert string to lowercase (with memory limit)
 std::string toLowerCase(const std::string &str) {
@@ -437,6 +452,62 @@ void setup() {
 }
 
 void loop() {
+  // Periodic OTA check
+  if (millis() - lastOtaCheckMs > OTA_CHECK_INTERVAL_MS) {
+    lastOtaCheckMs = millis();
+    if (WiFi.status() == WL_CONNECTED) {
+      String url = String(SERVER_HOST) + String(OTA_MANIFEST_ENDPOINT);
+      HTTPClient http;
+      http.begin(url);
+      int code = http.GET();
+      if (code == 200) {
+        String body = http.getString();
+        // very small JSON parse: find "version":"..."
+        int vi = body.indexOf("\"version\"");
+        if (vi >= 0) {
+          int qi = body.indexOf('"', vi + 9);
+          int qj = qi >= 0 ? body.indexOf('"', qi + 1) : -1;
+          String ver = (qi >= 0 && qj > qi) ? body.substring(qi + 1, qj) : "";
+          if (ver.length() && ver != currentFirmwareVersion) {
+            // Download and apply
+            String durl = String(SERVER_HOST) + String(OTA_DOWNLOAD_ENDPOINT) + String("?version=") + ver;
+            HTTPClient dhttp;
+            dhttp.begin(durl);
+            int dcode = dhttp.GET();
+            if (dcode == 200) {
+              int len = dhttp.getSize();
+              WiFiClient * stream = dhttp.getStreamPtr();
+              if (!Update.begin(len > 0 ? len : (1024*1024))) { // allocate up to 1MB default
+                Serial.println("OTA Update begin failed");
+              } else {
+                size_t written = Update.writeStream(*stream);
+                if (written == (size_t)len || len == -1) {
+                  if (Update.end()) {
+                    if (Update.isFinished()) {
+                      Serial.println("OTA Update successful. Rebooting...");
+                      currentFirmwareVersion = ver;
+                      ESP.restart();
+                    } else {
+                      Serial.println("OTA Update not finished.");
+                    }
+                  } else {
+                    Serial.printf("OTA Update end error: %s\n", Update.errorString());
+                  }
+                } else {
+                  Serial.printf("OTA write incomplete: %u of %d\n", (unsigned)written, len);
+                }
+              }
+            } else {
+              Serial.printf("Firmware download failed: %d\n", dcode);
+            }
+            dhttp.end();
+          }
+        }
+      }
+      http.end();
+    }
+  }
+
   devicesWithTarget.clear();
 
   static MyAdvertisedDeviceCallbacks myCallbacks;

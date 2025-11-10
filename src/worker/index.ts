@@ -171,6 +171,126 @@ app.post("/api/employees", authMiddleware, zValidator("json", CreateEmployeeSche
   const db = c.env.DB;
   
   try {
+    // Normalize inputs
+    const fullName = (data.name || '').trim();
+    // Prefer provided hex; else derive from full name
+    const providedHex = (data.hex_value || '').toUpperCase();
+    const baseHex = providedHex || stringToHex(fullName);
+
+    // If an employee with this hex exists, handle reactivation instead of creating a duplicate
+    const existing = await db.prepare(`
+      SELECT e.id as employee_id, e.is_active as is_active
+      FROM employees e
+      JOIN employee_details ed ON e.id = ed.employee_id
+      WHERE ed.hex_value = ?
+      LIMIT 1
+    `).bind(baseHex).first() as { employee_id: number; is_active: number } | null;
+
+    if (existing) {
+      if (existing.is_active === 0) {
+        // Reactivate: set active, update name and details
+        await db.prepare(`UPDATE employees SET name = ?, is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+          .bind(fullName, existing.employee_id).run();
+
+        // Attempt to update details including working_mode, fallback if column absent
+        const detParams: Array<string | number | null> = [
+          data.role,
+          data.department,
+          data.emp_id || null,
+          data.email || null,
+          data.phone || null,
+          data.hire_date || null,
+          data.manager || null,
+          data.location || null,
+          data.notes || null,
+          (data as unknown as { working_mode?: string }).working_mode || null,
+          existing.employee_id,
+        ];
+        try {
+          await db.prepare(`
+            UPDATE employee_details 
+            SET role = ?, department = ?, emp_id = ?, email = ?, phone = ?, hire_date = ?, manager = ?, location = ?, notes = ?, working_mode = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE employee_id = ?
+          `).bind(...detParams).run();
+        } catch {
+          await db.prepare(`
+            UPDATE employee_details 
+            SET role = ?, department = ?, emp_id = ?, email = ?, phone = ?, hire_date = ?, manager = ?, location = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE employee_id = ?
+          `).bind(
+            data.role,
+            data.department,
+            data.emp_id || null,
+            data.email || null,
+            data.phone || null,
+            data.hire_date || null,
+            data.manager || null,
+            data.location || null,
+            data.notes || null,
+            existing.employee_id,
+          ).run();
+        }
+
+        // Return the reactivated employee record
+        const employee = await db.prepare(`
+          SELECT 
+            e.id, e.name, e.uuid, e.is_active, e.created_at, e.updated_at,
+            ed.id as details_id, ed.hex_value, ed.role, ed.department, ed.emp_id,
+            ed.email, ed.phone, ed.hire_date, ed.manager, ed.location, ed.notes,
+            ed.created_at as details_created_at, ed.updated_at as details_updated_at
+          FROM employees e
+          LEFT JOIN employee_details ed ON e.id = ed.employee_id
+          WHERE e.id = ?
+        `).bind(existing.employee_id).first() as unknown as EmployeeWithDetailsRow;
+
+        const responseEmployee = {
+          id: employee.id,
+          name: employee.name,
+          uuid: employee.uuid,
+          is_active: employee.is_active,
+          created_at: employee.created_at,
+          updated_at: employee.updated_at,
+          details: {
+            id: employee.details_id,
+            employee_id: employee.id,
+            hex_value: employee.hex_value,
+            role: employee.role,
+            department: employee.department,
+            emp_id: employee.emp_id,
+            email: employee.email,
+            phone: employee.phone,
+            hire_date: employee.hire_date,
+            manager: employee.manager,
+            location: employee.location,
+            notes: employee.notes,
+            created_at: employee.details_created_at,
+            updated_at: employee.details_updated_at,
+          }
+        };
+        return c.json(responseEmployee);
+      }
+      // Exists and active: if user provided an explicit hex, block; otherwise we will derive a unique one below
+    }
+
+    // Preflight ensure hex uniqueness in employee_details
+    let hexToUse = baseHex;
+    const hexExists = await db.prepare(`SELECT id FROM employee_details WHERE hex_value = ? LIMIT 1`).bind(hexToUse).first();
+    if (hexExists) {
+      if (providedHex) {
+        return c.json({ error: "Hex value already exists. Please use a unique Hex Value for this employee." }, 400);
+      }
+      // Try to derive a unique hex by suffixing the full name (" <n>") and encoding
+      let uniqueFound = false;
+      for (let i = 2; i <= 10; i++) {
+        const candidate = stringToHex(`${fullName} ${i}`);
+        const exists = await db.prepare(`SELECT id FROM employee_details WHERE hex_value = ? LIMIT 1`).bind(candidate).first();
+        if (!exists) { hexToUse = candidate; uniqueFound = true; break; }
+      }
+      if (!uniqueFound) {
+        return c.json({ error: "Unable to derive a unique Hex automatically. Please provide a unique Hex Value." }, 400);
+      }
+    }
+
     // Start a transaction-like approach (D1 doesn't support transactions)
     // First create the employee
     // Generate a unique per-employee identifier to satisfy UNIQUE constraint on employees.uuid
@@ -181,9 +301,9 @@ app.post("/api/employees", authMiddleware, zValidator("json", CreateEmployeeSche
       INSERT INTO employees (name, uuid, hex_value, is_active)
       VALUES (?, ?, ?, 1)
     `).bind(
-      data.name,
+      fullName,
       generatedUuid,
-      data.hex_value || stringToHex(data.name.trim().split(/\s+/)[0] || data.name)
+      hexToUse
     ).run();
     console.log('👤 Creating employee:', { name: data.name, uuid: generatedUuid });
     
@@ -191,11 +311,9 @@ app.post("/api/employees", authMiddleware, zValidator("json", CreateEmployeeSche
       return c.json({ error: "Failed to create employee" }, 500);
     }
     
-    const employeeId = employeeResult.meta.last_row_id;
-    
-    // Convert first name to hex if not provided
-    const firstName = data.name.trim().split(/\s+/)[0] || data.name;
-    const hexValue = data.hex_value || stringToHex(firstName);
+  const employeeId = employeeResult.meta.last_row_id;
+  // We'll reuse the chosen hex for details
+  const hexValue = hexToUse;
     
     // Then create the employee details
     // Try inserting with working_mode if the column exists; otherwise fallback without it
@@ -544,6 +662,7 @@ app.get("/api/attendance", authMiddleware, async (c) => {
   const db = c.env.DB;
   const limit = c.req.query("limit") || "100";
   const date = c.req.query("date"); // YYYY-MM-DD format
+  const month = c.req.query("month"); // YYYY-MM
   const employee_id = c.req.query("employee_id");
   const status = c.req.query("status"); // checkin or checkout
   const department = c.req.query("department");
@@ -579,6 +698,10 @@ app.get("/api/attendance", authMiddleware, async (c) => {
   if (date) {
     query += ` AND ar.date = ?`;
     params.push(date);
+  }
+  if (month) {
+    query += ` AND ar.date LIKE ?`;
+    params.push(`${month}-%`);
   }
   
   if (employee_id) {
@@ -762,12 +885,63 @@ app.get('/api/attendance/export', authMiddleware, async (c) => {
     date: string; time: string; employee_name: string; employee_role: string | null; employee_department: string | null; status: string; hex_value: string; employee_emp_id: string | null;
   }>;
 
-  // Headers
-  const headers = ['Date','Time','Employee','Role','Department','Status','Hex Value','Employee ID'];
+  // Compute break annotations similar to UI (group by employee+date)
+  type Row = typeof rows[number];
+  const byKey = new Map<string, Row[]>();
+  rows.forEach(r => {
+    const key = `${r.employee_name}|${r.date}`; // employee_id not selected; using name as proxy
+    const list = byKey.get(key) || [];
+    list.push(r);
+    byKey.set(key, list);
+  });
+  const annotations: Record<string, { breakType?: string; breakDuration?: string; first?: boolean; last?: boolean }> = {};
+  for (const [, list] of byKey) {
+    const sorted = list.slice().sort((a,b) => new Date(a.time ? `${a.date}T${a.time}` : a.date).getTime() - new Date(b.time ? `${b.date}T${b.time}` : b.date).getTime());
+    let lastCheckoutTs: number | null = null;
+    let firstCheckinId: string | null = null;
+    let lastCheckoutId: string | null = null;
+    for (const r of sorted) {
+      const ts = new Date(r.time ? `${r.date}T${r.time}` : r.date).getTime();
+      const idKey = `${r.date}|${r.time}|${r.employee_name}|${r.status}`;
+      if (r.status === 'checkin') {
+        if (firstCheckinId == null) firstCheckinId = idKey;
+        if (lastCheckoutTs != null) {
+          const diff = (ts - lastCheckoutTs) / 1000;
+          const format = (seconds: number) => {
+            const s = Math.max(0, Math.floor(seconds));
+            const m = Math.floor(s / 60); const rem = s % 60;
+            if (m === 0) return `${rem}s`; if (rem === 0) return `${m}m`; return `${m}m ${rem}s`;
+          };
+          if (diff < 5*60) annotations[idKey] = { breakType: 'Short break', breakDuration: format(diff) };
+          else if (diff >= 10*60) annotations[idKey] = { breakType: 'Lunch break', breakDuration: format(diff) };
+          else annotations[idKey] = { breakType: 'Break', breakDuration: format(diff) };
+        }
+      } else if (r.status === 'checkout') {
+        lastCheckoutTs = ts; lastCheckoutId = idKey;
+      }
+    }
+    if (firstCheckinId) annotations[firstCheckinId] = { ...(annotations[firstCheckinId] || {}), first: true };
+    if (lastCheckoutId) annotations[lastCheckoutId] = { ...(annotations[lastCheckoutId] || {}), last: true };
+  }
+
+  // Headers with break columns
+  const headers = ['Date','Time','Employee','Status','Break Type','Break Duration','First Of Day','Last Of Day','Hex Value','Employee ID'];
   const csvLines = [headers.join(',')];
   for (const r of rows) {
-    const line = [r.date, r.time, r.employee_name, r.employee_role || '', r.employee_department || '', r.status, r.hex_value, r.employee_emp_id || '']
-      .map(v => '"' + String(v).replace(/"/g, '""') + '"').join(',');
+    const idKey = `${r.date}|${r.time}|${r.employee_name}|${r.status}`;
+    const ann = annotations[idKey] || {};
+    const line = [
+      r.date,
+      r.time,
+      r.employee_name,
+      r.status,
+      ann.breakType || '',
+      ann.breakDuration || '',
+      ann.first ? 'yes' : '',
+      ann.last ? 'yes' : '',
+      r.hex_value,
+      r.employee_emp_id || ''
+    ].map(v => '"' + String(v).replace(/"/g, '""') + '"').join(',');
     csvLines.push(line);
   }
 

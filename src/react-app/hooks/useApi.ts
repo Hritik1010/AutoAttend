@@ -111,12 +111,40 @@ export function useAttendance(limit?: number) {
   return { attendance, loading, error, refetch: fetchAttendance };
 }
 
-export async function exportAttendanceCSV(opts: { date?: string; month?: string; department?: string; role?: string }) {
+export async function getAttendance(params: {
+  limit?: number;
+  date?: string;
+  month?: string;
+  status?: string;
+  department?: string;
+  role?: string;
+  employee_id?: number;
+}) {
+  const search = new URLSearchParams();
+  if (params.limit) search.set('limit', String(params.limit));
+  if (params.date) search.set('date', params.date);
+  if (params.month) search.set('month', params.month);
+  if (params.status) search.set('status', params.status);
+  if (params.department) search.set('department', params.department);
+  if (params.role) search.set('role', params.role);
+  if (params.employee_id) search.set('employee_id', String(params.employee_id));
+  const url = `${API_BASE}/api/attendance?${search.toString()}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to fetch attendance');
+  }
+  return res.json() as Promise<AttendanceRecordWithEmployee[]>;
+}
+
+export async function exportAttendanceCSV(opts: { date?: string; month?: string; department?: string; role?: string; status?: string; employee_id?: number }) {
   const params = new URLSearchParams();
   if (opts.date) params.set('date', opts.date);
   if (opts.month) params.set('month', opts.month);
   if (opts.department) params.set('department', opts.department);
   if (opts.role) params.set('role', opts.role);
+  if (opts.status) params.set('status', opts.status);
+  if (opts.employee_id) params.set('employee_id', String(opts.employee_id));
   const url = `${API_BASE}/api/attendance/export?${params.toString()}`;
   const response = await fetch(url);
   if (!response.ok) {
