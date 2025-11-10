@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import type { EmployeeWithDetails, AttendanceRecordWithEmployee, AttendanceStats, CreateEmployeeRequest, UpdateEmployeeRequest } from '@/shared/types';
 
-const API_BASE = '';
+// Allow overriding API base for production deployments (e.g. Cloudflare Worker URL)
+// Set VITE_API_BASE in your environment (.env, .dev.vars via plugin, or host config)
+const API_BASE = (import.meta as any)?.env?.VITE_API_BASE ? String((import.meta as any).env.VITE_API_BASE) : '';
 
 export function useEmployees() {
   const [employees, setEmployees] = useState<EmployeeWithDetails[]>([]);
