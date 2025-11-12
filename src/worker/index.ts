@@ -11,7 +11,8 @@ import {
 // Define Env type locally for Worker bindings
 type Env = {
   DB: D1Database;
-  R2_BUCKET: R2Bucket;
+  // R2 bucket is optional; when not bound, OTA endpoints return 501
+  R2_BUCKET?: R2Bucket;
 };
 
 const AUTH_COOKIE = "AA_AUTH";
@@ -963,11 +964,11 @@ app.get('/api/attendance/export', authMiddleware, async (c) => {
 // Public: manifest describing latest firmware
 app.get('/api/ota/manifest', async (c) => {
   const r2 = c.env.R2_BUCKET;
+  if (!r2) return c.json({ error: 'OTA disabled (no R2 bucket bound)' }, 501);
   const obj = await r2.get('ota/manifest.json');
   if (!obj) return c.json({ error: 'No manifest found' }, 404);
   const text = await obj.text();
   const data = JSON.parse(text);
-  // Enrich with relative download URL if not present
   if (!data.download_url && data.key) {
     data.download_url = `/api/ota/download?key=${encodeURIComponent(data.key)}`;
   }
@@ -977,10 +978,10 @@ app.get('/api/ota/manifest', async (c) => {
 // Public: stream firmware from R2
 app.get('/api/ota/download', async (c) => {
   const r2 = c.env.R2_BUCKET;
+  if (!r2) return c.json({ error: 'OTA disabled (no R2 bucket bound)' }, 501);
   const key = c.req.query('key');
   let downloadKey = key || '';
   if (!downloadKey) {
-    // fallback to manifest
     const man = await r2.get('ota/manifest.json');
     if (!man) return c.json({ error: 'No manifest found' }, 404);
     const data = JSON.parse(await man.text());
@@ -1002,6 +1003,7 @@ app.get('/api/ota/download', async (c) => {
 // Protected: upload new firmware + update manifest
 app.post('/api/ota/upload', authMiddleware, async (c) => {
   const r2 = c.env.R2_BUCKET;
+  if (!r2) return c.json({ error: 'OTA disabled (no R2 bucket bound)' }, 501);
   const form = await c.req.formData();
   const version = String(form.get('version') || '').trim();
   const file = form.get('firmware');

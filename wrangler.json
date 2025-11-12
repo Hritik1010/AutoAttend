@@ -1,31 +1,29 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "019a4ead-1cfb-71c4-914c-dc2317d59ceb",
-  "main": "./src/worker/index.ts",
-  "compatibility_date": "2025-06-17",
-  "compatibility_flags": ["nodejs_compat"],
-  "observability": {
-    "enabled": true
-  },
-  "upload_source_maps": true,
-  "build": {
-    "command": "npm run build"
-  },
-  "assets": {
-    "directory": "dist/client",
-    "not_found_handling": "single-page-application"
-  },
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "019a4ead-1cfb-71c4-914c-dc2317d59ceb",
-      "database_id": "019a4ead-1cfb-71c4-914c-dc2317d59ceb"
-    }
-  ],
-  "r2_buckets": [
-    {
-      "binding": "R2_BUCKET",
-      "bucket_name": "019a4ead-1cfb-71c4-914c-dc2317d59ceb"
-    }
-  ]
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "019a4ead-1cfb-71c4-914c-dc2317d59ceb",
+	"main": "./src/worker/index.ts",
+	"compatibility_date": "2025-06-17",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"observability": {
+		"enabled": true
+	},
+	"upload_source_maps": true,
+	"build": {
+		"command": "npm run build"
+	},
+	"assets": {
+		"directory": "dist/client",
+		"not_found_handling": "single-page-application"
+	},
+	"workers_dev": true,
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "autoattend-db",
+			"database_id": "34af4ac2-fd9e-4f1c-b74e-b3443429eede"
+		}
+	],
+	"r2_buckets": []
 }
