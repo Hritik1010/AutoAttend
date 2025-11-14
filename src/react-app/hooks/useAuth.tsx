@@ -18,7 +18,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const fetchMe = async () => {
     try {
       setIsPending(true);
-      const res = await fetch('/api/auth/me');
+      const res = await fetch('https://019a4ead-1cfb-71c4-914c-dc2317d59ceb.thumbstack-autoattend.workers.dev/api/auth/me');
       if (res.ok) {
         const data = await res.json();
         setUser(data);
@@ -37,7 +37,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const login = useCallback(async (username: string, password: string) => {
-    const res = await fetch('/api/login', {
+    const res = await fetch('https://019a4ead-1cfb-71c4-914c-dc2317d59ceb.thumbstack-autoattend.workers.dev/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
